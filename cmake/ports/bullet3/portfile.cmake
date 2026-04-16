@@ -86,6 +86,28 @@ string(
 		"${CPP_CONTENT}")
 file(WRITE "${SOURCE_PATH}/src/BulletDynamics/ConstraintSolver/btGeneric6DofSpring2Constraint.cpp" "${CPP_CONTENT}")
 
+# Apply constraint collapse/inversion fixes based on commit #63f7473
+file(READ "${SOURCE_PATH}/src/BulletDynamics/ConstraintSolver/btSequentialImpulseConstraintSolver.cpp" CPP_CONTENT)
+string(REGEX REPLACE "[ \t]*btScalar fsum = btFabs\\(sum\\);[\r]?\n" "" CPP_CONTENT "${CPP_CONTENT}")
+string(REGEX REPLACE "[ \t]*btAssert\\(fsum > SIMD_EPSILON\\);[\r]?\n" "" CPP_CONTENT "${CPP_CONTENT}")
+string(
+	REGEX REPLACE
+		"solverConstraint\\.m_jacDiagABInv = fsum > SIMD_EPSILON \\? sorRelaxation / sum : 0\\.f;"
+		"solverConstraint.m_jacDiagABInv = sum != 0.f ? sorRelaxation / sum : 0.f;"
+		CPP_CONTENT
+		"${CPP_CONTENT}")
+
+file(WRITE "${SOURCE_PATH}/src/BulletDynamics/ConstraintSolver/btSequentialImpulseConstraintSolver.cpp" "${CPP_CONTENT}")
+
+file(READ "${SOURCE_PATH}/src/LinearMath/btMatrix3x3.h" HEADER_CONTENT)
+string(
+	REPLACE
+		"if (btFabs(det) > SIMD_EPSILON)"
+		"if (btFabs(det) != 0)"
+		HEADER_CONTENT
+		"${HEADER_CONTENT}")
+file(WRITE "${SOURCE_PATH}/src/LinearMath/btMatrix3x3.h" "${HEADER_CONTENT}")
+
 file(REMOVE_RECURSE "${SOURCE_PATH}/examples/ThirdPartyLibs")
 
 vcpkg_check_features(
