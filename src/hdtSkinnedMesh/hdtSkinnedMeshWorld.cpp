@@ -213,7 +213,7 @@ namespace hdt
 			for (auto& j : i->m_bones) {
 				auto body = &j->m_rig;
 				if (!body->isStaticOrKinematicObject() && !(body->getFlags() & BT_DISABLE_WORLD_GRAVITY)) {
-					body->setGravity(m_gravity * j->m_gravityFactor);
+					body->setGravity(m_gravity * j->m_gravityFactor * j->m_currentTransform.getScale());
 				}
 			}
 		}
