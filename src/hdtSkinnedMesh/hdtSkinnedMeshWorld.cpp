@@ -213,7 +213,8 @@ namespace hdt
 			for (auto& j : i->m_bones) {
 				auto body = &j->m_rig;
 				if (!body->isStaticOrKinematicObject() && !(body->getFlags() & BT_DISABLE_WORLD_GRAVITY)) {
-					body->setGravity(m_gravity * j->m_gravityFactor * j->m_currentTransform.getScale());
+					//Scale gravity based on a rig's scale. Will break past 800x
+					body->setGravity(m_gravity * j->m_gravityFactor * std::min(100.f, j->m_currentTransform.getScale()));
 				}
 			}
 		}
