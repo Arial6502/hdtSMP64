@@ -159,7 +159,7 @@ void DumpNodeChildren(RE::NiAVObject* node)
 							geometry->world.translate.z);
 
 						if (geometry->GetGeometryRuntimeData().skinInstance && geometry->GetGeometryRuntimeData().skinInstance->skinData) {
-							for (uint32_t boneIdx = 0; boneIdx < geometry->GetGeometryRuntimeData().skinInstance->skinData->bones; boneIdx++) {
+							for (uint32_t boneIdx = 0; boneIdx < geometry->GetGeometryRuntimeData().skinInstance->skinData->GetBoneCount(); boneIdx++) {
 								auto bone = geometry->GetGeometryRuntimeData().skinInstance->bones[boneIdx];
 								logger::info(
 									"Bone {} - {} {} [{:.2f}, {:.2f}, {:.2f}]",
@@ -495,6 +495,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
 		break;
 	case SKSE::MessagingInterface::kPostPostLoad:
 		{
+			Hooks::InstallHighPriority();
 			hdt::g_pluginInterface.onPostPostLoad();
 			checkOldPlugins();
 		}
@@ -593,7 +594,7 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
 	//
 	SKSE::GetCameraEventSource()->AddEventSink(hdt::SkyrimPhysicsWorld::get());
 
-	Hooks::Install();
+	Hooks::InstallLowPriority();
 
 	hdt::g_pluginInterface.init(a_skse);
 

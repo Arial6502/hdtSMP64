@@ -284,7 +284,7 @@ namespace Hooks
 				RE::NiAVObject* object = armor->GetObjectByName(NodeName);
 				RE::BSTriShape* triShape = object ? object->AsTriShape() : nullptr;
 				if (triShape) {
-					auto size = triShape->GetGeometryRuntimeData().skinInstance->skinData->bones;
+					auto size = triShape->GetGeometryRuntimeData().skinInstance->skinData->GetBoneCount();
 					for (uint32_t idx = 0; idx < size; idx++)  // all good here
 					{
 						auto bone = triShape->GetGeometryRuntimeData().skinInstance->bones[idx];
@@ -307,7 +307,7 @@ namespace Hooks
 				RE::NiAVObject* object = ret->GetObjectByName(NodeName);
 				RE::BSTriShape* triShape = object ? object->AsTriShape() : nullptr;
 				if (triShape) {
-					auto size = triShape->GetGeometryRuntimeData().skinInstance->skinData->bones;
+					auto size = triShape->GetGeometryRuntimeData().skinInstance->skinData->GetBoneCount();
 					for (uint32_t idx = 0; idx < size; idx++) {
 						auto bone = triShape->GetGeometryRuntimeData().skinInstance->bones[idx];
 						if (bone == nullptr) {
@@ -348,15 +348,21 @@ namespace Hooks
 		DetourAttach((PVOID*)&_SetBoneName, (PVOID)SetBoneName_Hook);
 	}
 
-	void Install()
+	void InstallHighPriority()
 	{
-		logger::trace("Hooking...");
+		logger::trace("Installing high-priority hooks...");
 
-		// generic hooks
-		BSFaceGenNiNodeHooks::Hook();
 		MainHooks::Hook();
 
-		//
+		logger::trace("...success");
+	}
+
+	void InstallLowPriority()
+	{
+		logger::trace("Installing low-priority hooks...");
+
+		BSFaceGenNiNodeHooks::Hook();
+
 		DetourTransactionBegin();
 		DetourUpdateThread(GetCurrentThread());
 		ActorEquipManagerHooks::Hook();
@@ -366,13 +372,11 @@ namespace Hooks
 
 		DetourTransactionCommit();
 
-		//
 		DetourTransactionBegin();
 		DetourUpdateThread(GetCurrentThread());
 		BipedAnimHooks::Hook();
 		DetourTransactionCommit();
 
-		//
 		logger::trace("...success");
 	}
 }
