@@ -17,6 +17,9 @@
     },
     "xbyak",
     "tbb",
-    "pugixml"
+    "pugixml",
+    "rapidjson",
+    "doctest",
+    "miniz"
   ]
 }

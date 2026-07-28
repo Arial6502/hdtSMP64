@@ -14,6 +14,7 @@
 #include "NetImmerseUtils.h"
 #include "Utils/hdtConcurrencyUtils.h"
 #include "Utils/hdtNIFBinaryUtils.h"
+#include "Utils/hdtPhysicsXmlSource.h"
 #include "Utils/hdtStringUtils.h"
 #include "Utils/hdtTemplateDefaults.h"
 #include "Utils/hdtTimeUtils.h"
@@ -162,13 +163,13 @@ namespace hdt
 
 	using XMLValidationPair = std::pair<XSDValidationResult, SCHValidationResult>;
 
-	// The two flavours of template redundancy reported for one XML file: per-element
-	// tags that restate an inherited default, and whole <bone> declarations that only
-	// restate the auto-created default bone.
+	// The two flavours of per-file XML redundancy: element tags that restate an
+	// inherited default, and top-level <bone> declarations the engine skips because
+	// an earlier same-file element already claims the name (first use creates the bone).
 	struct XmlRedundancyInfo
 	{
 		std::vector<TemplateRedundantChildInfo> redundantChildren;
-		std::vector<RedundantBoneInfo> redundantBones;
+		std::vector<InertBoneInfo> inertBones;
 	};
 
 	// Load xmlPath from disk once and collect both redundancy flavours from the parsed
@@ -176,32 +177,39 @@ namespace hdt
 	// default-value warnings against actual runtime-effective template inheritance — a
 	// warning is suppressed when the tag is not redundant relative to the inherited
 	// template — while the bone info drives the redundant-<bone> warnings directly.
-	static XmlRedundancyInfo collectXmlRedundancyInfo(const std::string& xmlPath)
+	// `precomputed` lets the caller share one read+expand across validators; null reads and expands here.
+	static XmlRedundancyInfo collectXmlRedundancyInfo(const std::string& xmlPath, const PhysicsXmlSource* precomputed = nullptr)
 	{
 		XmlRedundancyInfo result;
 
-		std::string bytes = readAllFile2(xmlPath.c_str());
-		if (bytes.empty())
+		// Analyse the same fully-expanded document the runtime and other validators see. A malformed
+		// pattern is reported by the XSD validator, so just skip redundancy analysis here.
+		PhysicsXmlSource localSrc;
+		const PhysicsXmlSource& src = resolvePhysicsXmlSource(xmlPath, precomputed, localSrc);
+		if (src.xml.empty() || !src.ok)
 			return result;
 
 		pugi::xml_document doc;
-		auto parseResult = doc.load_buffer(bytes.data(), bytes.size());
+		auto parseResult = doc.load_buffer(src.xml.data(), src.xml.size());
 		if (!parseResult)
 			return result;
 
-		result.redundantChildren = CollectTemplateRedundantChildrenInfo(doc, &bytes);
-		result.redundantBones = CollectRedundantBoneDeclarations(doc, &bytes);
+		// Pass the source map so warnings on a pattern-bearing file report the author's line, not the
+		// expanded position (matching hdtSCHValidator); it is empty for files that use no patterns.
+		result.redundantChildren = CollectTemplateRedundantChildrenInfo(doc, &src.xml, &src.sourceMap);
+		result.inertBones = CollectInertBoneDeclarations(doc, &src.xml, &src.sourceMap);
 		return result;
 	}
 
 	/// Appends XSD violations, SCH violations, and template-redundant warnings for one XML
 	/// file to both the structured report and the text stream.
 	/// Callers must have already written a context line (e.g. "[OK]" or "-> xmlPath") to out.
+	/// `src` is the shared read+expand for this file (from parallelValidateXMLs), reused for redundancy.
 	static void appendXmlViolationsToReport(const XMLValidationPair& pair, const std::string& xmlPath,
-		AssetValidationResult& report, std::ostream& out)
+		AssetValidationResult& report, std::ostream& out, const PhysicsXmlSource* src = nullptr)
 	{
 		const auto& [xsdResult, schResult] = pair;
-		const auto redundancyInfo = collectXmlRedundancyInfo(xmlPath);
+		const auto redundancyInfo = collectXmlRedundancyInfo(xmlPath, src);
 		std::unordered_map<std::string, TemplateRedundantChildInfo> templateRedundantByLocation;
 		for (const auto& info : redundancyInfo.redundantChildren)
 			templateRedundantByLocation[info.location] = info;
@@ -304,34 +312,51 @@ namespace hdt
 			emitTemplateRedundantWarning(info);
 		}
 
-		// Whole <bone> declarations that only restate the auto-created default bone:
-		// the engine would fabricate an identical body on demand, so the declaration
-		// is removable. See CollectRedundantBoneDeclarations for the comparison.
-		for (const auto& bone : redundancyInfo.redundantBones) {
+		// Top-level <bone> declarations the engine skips because an earlier element in this
+		// file already claims the name — the first use creates the bone ("Bone X already
+		// exists, skipped"), so these declarations are inert and provably removable.
+		for (const auto& bone : redundancyInfo.inertBones) {
 			const std::string named = bone.boneName.empty() ? std::string() : " \"" + bone.boneName + "\"";
 			std::string msg = xmlPath + ":" + std::to_string(bone.line) + ": " + bone.location +
 			                  " - <bone>" + named +
-			                  " only restates the default bone settings; the engine creates an"
-			                  " identical bone on demand, so this declaration is unnecessary and can be removed.";
+			                  " is never used: an earlier <bone> or bone reference in this file already"
+			                  " claims this name (the first use creates the bone), so the engine skips"
+			                  " this declaration. It can be removed.";
 			report.warnings.push_back(msg);
 			report.hasWarnings = true;
 			out << "    [WARNING] " << bone.location << " (line " << bone.line << "): <bone>" << named
-				<< " only restates the default bone settings; the engine creates an identical bone on"
-				   " demand, so this declaration can be removed.\n";
+				<< " is never used: an earlier <bone> or bone reference in this file already claims"
+				   " this name (the first use creates the bone), so the engine skips this declaration;"
+				   " it can be removed.\n";
 		}
 	}
 
+	/// XSD + SCH results for a batch of files, plus the one read+expand each was validated against so
+	/// downstream steps (redundancy analysis) reuse it instead of re-expanding the same file.
+	struct BatchXmlValidation
+	{
+		std::vector<XMLValidationPair> pairs;
+		std::vector<PhysicsXmlSource> srcs;  // parallel to pairs
+	};
+
 	/// Validates multiple XML files in parallel, running both XSD and SCH validators on each.
+	/// Each file is read and pattern-expanded ONCE; that single PhysicsXmlSource feeds both validators
+	/// (and is returned for redundancy analysis) rather than being re-expanded per validator.
 	/// Both validators use std::once_flag-protected schema loading, making this thread-safe.
 	/// Results are returned in the same order as input paths.
-	static std::vector<XMLValidationPair> parallelValidateXMLs(const std::vector<std::string>& paths)
+	static BatchXmlValidation parallelValidateXMLs(const std::vector<std::string>& paths)
 	{
-		std::vector<XMLValidationPair> results(paths.size());
+		BatchXmlValidation out;
+		out.pairs.resize(paths.size());
+		out.srcs.resize(paths.size());
 		ParallelForChunks(paths.size(), [&](size_t begin, size_t end) {
-			for (size_t j = begin; j < end; ++j)
-				results[j] = { ValidatePhysicsXMLWithXSD(paths[j]), ValidatePhysicsXMLWithSchematron(paths[j]) };
+			for (size_t j = begin; j < end; ++j) {
+				out.srcs[j] = readAndExpandPhysicsXml(paths[j]);
+				out.pairs[j] = { ValidatePhysicsXMLWithXSD(paths[j], &out.srcs[j]),
+					ValidatePhysicsXMLWithSchematron(paths[j], &out.srcs[j]) };
+			}
 		});
-		return results;
+		return out;
 	}
 
 	/// Writes validation report content to a timestamped file in the SKSE log directory.
@@ -564,9 +589,9 @@ namespace hdt
 		std::vector<std::string>& out)
 	{
 		// Single pass: enumerate all entries, collect NIFs and recurse into dirs.
-		// Previously used two passes (*.nif + FindExSearchLimitToDirectories) but
-		// FindExSearchLimitToDirectories is advisory and ignored by NTFS — Pass 2
-		// enumerated all files anyway, doubling the I/O cost on animation mods.
+		// A two-pass split (*.nif, then FindExSearchLimitToDirectories) would not be
+		// cheaper: the directories-only filter is advisory and ignored by NTFS, so each
+		// pass enumerates every file anyway, doubling the I/O cost on animation mods.
 		// One pass with FIND_FIRST_EX_LARGE_FETCH is faster overall.
 		const std::wstring dirW = dir.wstring();
 		WIN32_FIND_DATAW fd;
@@ -599,11 +624,14 @@ namespace hdt
 
 	/// Cross-references an equipped item's physics XML node references against the live
 	/// actor skeleton and appends one violation line per node the skeleton does not
-	/// provide. Each line names the affected element role and the runtime consequence so
-	/// an author can see why their physics detaches. Emits nothing when the skeleton root
-	/// is null (the caller already reported that) or the XML is missing/malformed (the
-	/// schema-validation pass over these same equipped XMLs is what reports XML validity).
-	static void appendMissingBoneRefViolations(RE::NiNode* skeletonRoot, const std::string& xmlPath,
+	/// provide. `meshRoot` is the equipped item's 3D: a <bone> naming a node absent from the
+	/// skeleton but skinned by that mesh is not reported (the engine creates a body for it
+	/// from the mesh skin, no name lookup). Each line names the affected element role and the
+	/// runtime consequence so an author can see why their physics detaches. Emits nothing when
+	/// the skeleton root is null (the caller already reported that) or the XML is
+	/// missing/malformed (the schema-validation pass over these same equipped XMLs reports it).
+	static void appendMissingBoneRefViolations(RE::NiNode* skeletonRoot, RE::NiAVObject* meshRoot,
+		const std::string& xmlPath,
 		const std::unordered_map<RE::BSFixedString, RE::BSFixedString>& renameMap,
 		const std::string& skeletonName, std::vector<std::string>& out)
 	{
@@ -615,7 +643,7 @@ namespace hdt
 		for (const auto& kv : renameMap)
 			rename.emplace(kv.first.c_str(), kv.second.c_str());
 
-		for (const auto& m : FindMissingPhysicsXmlBoneRefs(skeletonRoot, xmlPath, rename)) {
+		for (const auto& m : FindMissingPhysicsXmlBoneRefs(skeletonRoot, meshRoot, xmlPath, rename)) {
 			std::string effect;
 			if (m.usedAsBone && m.constraintRefs > 0)
 				effect = "its <bone> body is skipped and " + std::to_string(m.constraintRefs) +
@@ -692,7 +720,7 @@ namespace hdt
 							if (!nifDiskPath.empty())
 								outNifScanViolations->push_back(nifDiskPath + ": equipped armor node is not a NiNode (physics XML: " + asset.xmlPath + ")");
 						}
-						appendMissingBoneRefViolations(skeleton.npc.get(), xmlPath, armor.renameMap, skeleton.name(), *outNifScanViolations);
+						appendMissingBoneRefViolations(skeleton.npc.get(), armor.armorWorn.get(), xmlPath, armor.renameMap, skeleton.name(), *outNifScanViolations);
 					}
 					result.push_back(std::move(asset));
 				}
@@ -727,7 +755,7 @@ namespace hdt
 							if (!nifDiskPath.empty())
 								outNifScanViolations->push_back(nifDiskPath + ": equipped headpart node is not a NiNode (physics XML: " + asset.xmlPath + ")");
 						}
-						appendMissingBoneRefViolations(skeleton.npc.get(), xmlPath, skeleton.head.renameMap, skeleton.name(), *outNifScanViolations);
+						appendMissingBoneRefViolations(skeleton.npc.get(), headPart.headPart.get(), xmlPath, skeleton.head.renameMap, skeleton.name(), *outNifScanViolations);
 					}
 					result.push_back(std::move(asset));
 				}
@@ -761,7 +789,7 @@ namespace hdt
 
 			// Physical mods directory bypass: enumerate each mod's directory
 			// directly on NTFS, avoiding MO2 VFS hook overhead entirely.
-			// Driven by <mods-dir> in configs.xml; falls back to the VFS scan of
+			// Driven by mods-dir in configs.json; falls back to the VFS scan of
 			// data/ when modsDir is empty (Vortex users, or unconfigured installs).
 			const fs::path kPhysModsDir = !g_validationConfig.modsDir.empty() ? fs::path(g_validationConfig.modsDir) : fs::path{};
 			const bool physScan = !kPhysModsDir.empty() && fs::exists(kPhysModsDir, ec) && fs::is_directory(kPhysModsDir, ec);
@@ -1151,7 +1179,8 @@ namespace hdt
 				reportedXMLs.insert(norm);
 				++report.totalXMLsFound;
 
-				const auto& pair = batchResults[xmlToIdx[norm]];
+				const auto batchIdx = xmlToIdx[norm];
+				const auto& pair = batchResults.pairs[batchIdx];
 				bool xmlHasErrors = hasBlockingXsdErrors(pair.first) || hasBlockingSchErrors(pair.second);
 
 				if (xmlHasErrors) {
@@ -1161,7 +1190,7 @@ namespace hdt
 					++report.xmlPassCount;
 				}
 
-				appendXmlViolationsToReport(pair, asset.xmlPath, report, out);
+				appendXmlViolationsToReport(pair, asset.xmlPath, report, out, &batchResults.srcs[batchIdx]);
 			} else {
 				out << "    [WARN] Could not determine XML path from NIF\n";
 			}
@@ -1382,7 +1411,7 @@ namespace hdt
 					}
 
 					++report.totalXMLsFound;
-					const auto& pair = batchResults[batchIdx];
+					const auto& pair = batchResults.pairs[batchIdx];
 					bool fileHasErrors = hasBlockingXsdErrors(pair.first) || hasBlockingSchErrors(pair.second);
 
 					if (fileHasErrors) {
@@ -1394,7 +1423,7 @@ namespace hdt
 						bodyStream << "    [OK]\n";
 					}
 
-					appendXmlViolationsToReport(pair, entry.xmlPath, report, bodyStream);
+					appendXmlViolationsToReport(pair, entry.xmlPath, report, bodyStream, &batchResults.srcs[batchIdx]);
 				}
 				bodyStream << "\n";
 			}
