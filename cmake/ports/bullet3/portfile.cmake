@@ -74,8 +74,8 @@ string(
 		"${CPP_CONTENT}")
 string(
 	REPLACE
-		"vel = (linVelA + tanVelA).dot(ax1) - (linVelB + tanVelB).dot(ax1);\n\t\t}\n\n\t\tbtScalar cfm = BT_ZERO;"
-		"vel = (linVelA + tanVelA).dot(ax1) - (linVelB + tanVelB).dot(ax1);\n\t\t}\n\n\t\tbtScalar dampingFactor = limot->m_nonHookeanDamping;\n\t\tbtScalar stiffnessFactor = limot->m_nonHookeanStiffness;\n\t\tif (!btFuzzyZero(error) && (!btFuzzyZero(dampingFactor) || !btFuzzyZero(stiffnessFactor)))\n\t\t{\n\t\t\tbtScalar range = pos < ep ? ep - limot->m_loLimit : limot->m_hiLimit - ep;\n\t\t\tbtScalar rf = !btFuzzyZero(range) ? btFabs(error) / range : BT_ZERO;\n\t\t\t// Avoid blowing shit up.\n\t\t\tbtScalar t = btClamped(rf, BT_ZERO, BT_ONE);\n\n\t\t\tkd *= BT_ONE - (dampingFactor * t);\n\t\t\tks *= BT_ONE - (stiffnessFactor * t);\n\t\t}\n\n\t\tbtScalar cfm = BT_ZERO;"
+		"vel = (linVelA + tanVelA).dot(ax1) - (linVelB + tanVelB).dot(ax1);\n\t\t}\n\t\tbtScalar cfm = BT_ZERO;"
+		"vel = (linVelA + tanVelA).dot(ax1) - (linVelB + tanVelB).dot(ax1);\n\t\t}\n\n\t\tbtScalar dampingFactor = limot->m_nonHookeanDamping;\n\t\tbtScalar stiffnessFactor = limot->m_nonHookeanStiffness;\n\t\tif (!btFuzzyZero(error) && (!btFuzzyZero(dampingFactor) || !btFuzzyZero(stiffnessFactor)))\n\t\t{\n\t\t\tbtScalar ep = limot->m_equilibriumPoint;\n\t\t\tbtScalar range = limot->m_currentPosition < ep ? ep - limot->m_loLimit : limot->m_hiLimit - ep;\n\t\t\tbtScalar rf = !btFuzzyZero(range) ? btFabs(error) / range : BT_ZERO;\n\t\t\t// Avoid blowing shit up.\n\t\t\tbtScalar t = btClamped(rf, BT_ZERO, BT_ONE);\n\n\t\t\tkd *= BT_ONE - (dampingFactor * t);\n\t\t\tks *= BT_ONE - (stiffnessFactor * t);\n\t\t}\n\n\t\tbtScalar cfm = BT_ZERO;"
 		CPP_CONTENT
 		"${CPP_CONTENT}")
 string(
@@ -84,6 +84,12 @@ string(
 		"}\n}\n\n// Elastic, uneven damping used to fake non-Hookean springs for a specific axis.\n// Default: 0 (disabled).  Other values below 1 will likely blow your spring up.. individual speed and hilarity may vary.\nvoid btGeneric6DofSpring2Constraint::setNonHookeanDamping(int index, btScalar damping)\n{\n\tbtAssert((index >= 0) && (index < 6));\n\tif (index < 3)\n\t{\n\t\tm_linearLimits.m_nonHookeanDamping[index] = damping;\n\t}\n\telse\n\t{\n\t\tm_angularLimits[index - 3].m_nonHookeanDamping = damping;\n\t}\n}\n\nvoid btGeneric6DofSpring2Constraint::setNonHookeanStiffness(int index, btScalar damping)\n{\n\tbtAssert((index >= 0) && (index < 6));\n\tif (index < 3)\n\t{\n\t\tm_linearLimits.m_nonHookeanStiffness[index] = damping;\n\t}\n\telse\n\t{\n\t\tm_angularLimits[index - 3].m_nonHookeanStiffness = damping;\n\t}\n}\n\nvoid btGeneric6DofSpring2Constraint::setDamping(int index, btScalar damping, bool limitIfNeeded)"
 		CPP_CONTENT
 		"${CPP_CONTENT}")
+# string(REPLACE) is silent when its search text is missing; this patch went unapplied that way before, leaving the
+# non-Hookean XML settings with no effect.
+string(FIND "${CPP_CONTENT}" "limot->m_nonHookeanDamping;" NON_HOOKEAN_SPRING_PATCHED)
+if(NON_HOOKEAN_SPRING_PATCHED EQUAL -1)
+	message(FATAL_ERROR "bullet3: the non-Hookean spring patch no longer matches btGeneric6DofSpring2Constraint.cpp")
+endif()
 file(WRITE "${SOURCE_PATH}/src/BulletDynamics/ConstraintSolver/btGeneric6DofSpring2Constraint.cpp" "${CPP_CONTENT}")
 
 # oneTBB (TBB >= 2021) removed task_scheduler_init.  Port btThreads.cpp to the oneTBB API: use tbb::global_control for

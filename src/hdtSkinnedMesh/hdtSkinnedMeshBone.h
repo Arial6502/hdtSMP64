@@ -33,6 +33,19 @@ namespace hdt
 		virtual void readTransform(float timeStep) = 0;
 		virtual void writeTransform() = 0;
 
+		// Moves the rig to follow an animated world transform, rescaling mass, inertia and the rig offset when the
+		// bone's world scale changed since the last read.
+		void readAnimatedTransform(const btQsTransform& animated, float timeStep, bool reset);
+
+		// m_rigToLocal, before readAnimatedTransform scaled its offset. Constraints start at scale 1 and
+		// apply the bone scale themselves, so they must be built from this.
+		btTransform rigToLocalAtUnitScale() const
+		{
+			auto t = m_rigToLocal;
+			t.getOrigin() /= m_currentTransform.getScale();
+			return t;
+		}
+
 		void internalUpdate();
 
 		bool canCollideWith(SkinnedMeshBone* rhs);

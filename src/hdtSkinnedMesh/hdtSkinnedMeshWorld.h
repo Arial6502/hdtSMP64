@@ -63,6 +63,11 @@ namespace hdt
 		btVector3 m_windSpeed;       // world windspeed
 		btScalar m_windTime = 0.0f;  // wind simulation clock
 
+		// Solver early-out threshold for an actor at scale 1 (0 disables the early-out).
+		btScalar m_residualThresholdAtUnitScale = 0.0f;
+		// Penetration depth past which contacts use split impulse, for an actor at scale 1 (Bullet's default).
+		btScalar m_splitImpulseThresholdAtUnitScale = -0.04f;
+
 	private:
 		std::vector<SkinnedMeshBody*> _bodies;
 		std::vector<SkinnedMeshShape*> _shapes;

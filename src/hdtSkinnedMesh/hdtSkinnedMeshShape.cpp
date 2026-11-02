@@ -129,9 +129,12 @@ namespace hdt
 
 			auto aabbMin = _mm_min_ps(_mm_min_ps(p0, p1), p2);
 			auto aabbMax = _mm_max_ps(_mm_max_ps(p0, p1), p2);
-			auto prenetration = _mm_set_ss(m_shapeProp.penetration);
+			// W holds the bone-scaled margin multiplier; the narrowphase scales penetration by it too, so the AABB must
+			// cover the same depth or deep contacts on large actors are culled before they are tested.
+			auto marginMultiplier = margin4.m128_f32[3] / 3;
+			auto prenetration = _mm_set_ss(marginMultiplier * m_shapeProp.penetration);
 			prenetration = _mm_andnot_ps(_mm_set_ss(-0.0f), prenetration);  // abs
-			margin4 = _mm_max_ss(_mm_set_ss(margin4.m128_f32[3] * m_shapeProp.margin / 3), prenetration);
+			margin4 = _mm_max_ss(_mm_set_ss(marginMultiplier * m_shapeProp.margin), prenetration);
 			margin4 = _mm_shuffle_ps(margin4, margin4, 0);
 			aabbMin = aabbMin - margin4;
 			aabbMax = aabbMax + margin4;

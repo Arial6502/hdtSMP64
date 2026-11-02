@@ -6,8 +6,8 @@ namespace hdt
 		BoneScaleConstraint(a, b, static_cast<btConeTwistConstraint*>(this)),
 		btConeTwistConstraint(a->m_rig, b->m_rig, btTransform::getIdentity(), btTransform::getIdentity())
 	{
-		auto fa = a->m_rigToLocal * frameInA;
-		auto fb = b->m_rigToLocal * frameInB;
+		auto fa = a->rigToLocalAtUnitScale() * frameInA;
+		auto fb = b->rigToLocalAtUnitScale() * frameInB;
 		setFrames(fa, fb);
 
 		enableMotor(false);  // motor temporary not support

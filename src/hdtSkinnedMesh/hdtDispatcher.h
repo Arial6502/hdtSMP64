@@ -42,5 +42,8 @@ namespace hdt
 
 		hdt::SpinLock m_lock;
 		std::vector<std::pair<SkinnedMeshBody*, SkinnedMeshBody*>> m_pairs;
+
+		// Contact CFM for bones at scale 1. 0 leaves contacts on the solver's global CFM.
+		btScalar m_contactCfmAtUnitScale = 0.0f;
 	};
 }

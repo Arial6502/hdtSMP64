@@ -475,6 +475,13 @@ namespace hdt
 			newPt.m_combinedFriction = rb0->m_rig.getFriction() * rb1->m_rig.getFriction();
 			newPt.m_combinedRestitution = rb0->m_rig.getRestitution() * rb1->m_rig.getRestitution();
 			newPt.m_combinedRollingFriction = rb0->m_rig.getRollingFriction() * rb1->m_rig.getRollingFriction();
+			// CFM is added to the contact's inverse mass, which grows as 1/scale^3. A fixed value turns contacts on large
+			// actors to mush (they sink through) and vanishes on small ones. The lighter bone dominates.
+			auto scale = std::min(rb0->m_currentTransform.getScale(), rb1->m_currentTransform.getScale());
+			if (dispatcher->m_contactCfmAtUnitScale > 0 && scale > 0) {
+				newPt.m_contactCFM = dispatcher->m_contactCfmAtUnitScale / (scale * scale * scale);
+				newPt.m_contactPointFlags |= BT_CONTACT_FLAG_HAS_CONTACT_CFM;
+			}
 
 			auto maniford = dispatcher->getNewManifold(&rb0->m_rig, &rb1->m_rig);
 			maniford->addManifoldPoint(newPt);

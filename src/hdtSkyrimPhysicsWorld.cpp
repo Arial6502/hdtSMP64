@@ -2,6 +2,7 @@
 #include "PluginInterfaceImpl.h"
 #include "WeatherManager.h"
 #include "hdtPhysicsProfiler.h"
+#include "hdtSkinnedMesh/hdtDispatcher.h"
 
 #include <LinearMath/btQuickprof.h>
 
@@ -23,7 +24,8 @@ namespace hdt
 
 		// Set a very low threshold so even micro-penetrations use Split Impulse
 		// Too low might cause weird visuals - default is -0.04f
-		getSolverInfo().m_splitImpulsePenetrationThreshold = -0.01f;
+		// It is a depth, so stepSimulation rescales it for the actors being simulated.
+		m_splitImpulseThresholdAtUnitScale = -0.01f;
 
 		// Default ERP2 is 0.2
 		// From Bullet: error reduction for non-contact constraints
@@ -33,6 +35,8 @@ namespace hdt
 		// Adds "sponginess" to collisions to absorb the constant recalculations
 		// Default is 0
 		getSolverInfo().m_globalCfm = 0.001f;
+		// CFM is an inverse mass, so contacts get it rescaled per contact for the bones' scale.
+		static_cast<CollisionDispatcher*>(m_dispatcher1)->m_contactCfmAtUnitScale = getSolverInfo().m_globalCfm;
 
 		// Ignore Bounciness (Restitution) on slow micro-collisions
 		// If objects are moving slower than this, they will not bounce at all.
@@ -44,7 +48,8 @@ namespace hdt
 		// SOLVER_SIMD nets a small performance uplift
 		// SOLVER_RANDMIZE_ORDER is also possible, but I clocked a pretty heavy performance hit. Maybe make it a config option
 		getSolverInfo().m_solverMode = SOLVER_SIMD;
-		getSolverInfo().m_leastSquaresResidualThreshold = 0.0001f;
+		// Early exit once the solver converged; stepSimulation rescales it for the actors being simulated.
+		m_residualThresholdAtUnitScale = 0.0001f;
 
 		m_averageInterval = m_timeTick;
 		m_accumulatedInterval = 0;

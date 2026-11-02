@@ -6,8 +6,8 @@ namespace hdt
 		BoneScaleConstraint(a, b, static_cast<btTypedConstraint*>(this)),
 		btGeneric6DofSpring2Constraint(a->m_rig, b->m_rig, btTransform::getIdentity(), btTransform::getIdentity(), RO_XYZ)
 	{
-		auto fa = a->m_rigToLocal * frameInA;
-		auto fb = b->m_rigToLocal * frameInB;
+		auto fa = a->rigToLocalAtUnitScale() * frameInA;
+		auto fb = b->rigToLocalAtUnitScale() * frameInB;
 		setFrames(fa, fb);
 
 		for (int i = 0; i < 6; ++i)
@@ -42,10 +42,14 @@ namespace hdt
 		m_linearLimits.m_equilibriumPoint *= factor;
 		// target k = ma / x(kg/s^2)
 		m_linearLimits.m_springStiffness *= factor3;
+		// Spring2 damping is an absolute coefficient (impulse = kd * v * dt, kg/s), not a ratio, so it must follow the
+		// mass like the stiffness does. Left unscaled it overwhelms small actors and gets clamped to kd = m/dt.
+		m_linearLimits.m_springDamping *= factor3;
 		m_linearLimits.m_upperLimit *= factor;
 		m_linearLimits.m_lowerLimit *= factor;
 		for (int i = 0; i < 3; ++i) {
 			m_angularLimits[i].m_springStiffness *= factor5;
+			m_angularLimits[i].m_springDamping *= factor5;
 		}
 
 		m_scaleA = newScaleA;

@@ -149,6 +149,19 @@ namespace hdt
 
 	int SkinnedMeshWorld::stepSimulation(btScalar remainingTimeStep, int, btScalar fixedTimeStep)
 	{
+		// The early-out compares squared velocity corrections, and the split-impulse threshold is a depth; both shrink
+		// with the actor scale. Fixed values stop the solver early and switch contact handling on small actors, so
+		// scale them by the smallest one.
+		float minScale = FLT_MAX;
+		for (auto& system : m_systems)
+			for (auto& bone : system->m_bones)
+				if (!bone->m_rig.isStaticOrKinematicObject() && bone->m_currentTransform.getScale() > 0)
+					minScale = std::min(minScale, bone->m_currentTransform.getScale());
+		if (minScale == FLT_MAX)
+			minScale = 1;
+		getSolverInfo().m_leastSquaresResidualThreshold = m_residualThresholdAtUnitScale * minScale * minScale;
+		getSolverInfo().m_splitImpulsePenetrationThreshold = m_splitImpulseThresholdAtUnitScale * minScale;
+
 		applyGravity();
 		if (hdt::SkyrimPhysicsWorld::get()->m_enableWind)
 			applyWind(remainingTimeStep);
@@ -263,7 +276,8 @@ namespace hdt
 				continue;
 			for (auto& j : i->m_bones) {
 				auto body = &j->m_rig;
-				if (body->isStaticOrKinematicObject() || btFuzzyZero(j->m_windFactor))
+				const btScalar scale = j->m_currentTransform.getScale();
+				if (body->isStaticOrKinematicObject() || btFuzzyZero(j->m_windFactor) || scale <= 0)
 					continue;
 
 				const btScalar windFactor = j->m_windFactor * system->m_windFactor;
@@ -279,7 +293,7 @@ namespace hdt
 				const btScalar gustBurst = gustPulse * gustPulse;
 				const btScalar gustScale = clampScalar(0.68f + longGust * 0.18f + midGust * 0.12f + flutter * 0.06f + gustBurst * 0.45f, 0.35f, 1.55f);
 
-				const btScalar relativeScale = clampScalar((m_windSpeed - body->getLinearVelocity() * kResponseToBodyVelocity).dot(windDirection) / windMagnitude,
+				const btScalar relativeScale = clampScalar((m_windSpeed - body->getLinearVelocity() / scale * kResponseToBodyVelocity).dot(windDirection) / windMagnitude,
 					0.0f,
 					1.4f);
 
@@ -293,7 +307,11 @@ namespace hdt
 					up * verticalFlutter;
 
 				const btVector3 pressureOffset = (side * midGust + up * (0.35f + flutter * 0.25f)) * kPressureCenterOffset;
-				body->applyForce(windForce, pressureOffset);
+				// Like gravity, wind should move a scaled bone the same relative amount as at scale 1: the force follows
+				// the mass (scale^3) times the scale, and the push point the bone's size. A fixed force flings small
+				// actors around (their bones are scale^3 lighter) and barely moves large ones.
+				const btScalar forceScale = scale * scale * scale * scale;
+				body->applyForce(windForce * forceScale, pressureOffset * scale);
 			}
 		}
 	}
